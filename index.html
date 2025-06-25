@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Image Editor</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      background: white;
+      border-radius: 10px;
+      padding: 20px;
+      max-width: 800px;
+      width: 100%;
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+    }
+
+    .canvas-wrapper {
+      position: relative;
+      width: 500px;
+      height: 500px;
+      margin: 0 auto;
+      border: 1px solid #ccc;
+      background: #eee;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    #overlay {
+      position: absolute;
+      pointer-events: none;
+      border: 2px dashed red;
+      display: none;
+    }
+
+    .controls label {
+      display: block;
+      margin-top: 10px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      justify-content: center;
+    }
+
+    button {
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+
+    .hidden-input {
+      display: none;
+    }
+
+    .modal {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+    }
+
+    .modal-content input[type="text"] {
+      width: 300px;
+      padding: 5px;
+    }
+
+    .close-btn {
+      float: right;
+      cursor: pointer;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>Simple Image Editor</h2>
+  <small>made by <a href="https://cemrekarakas.com/">cemre</a></small>
+
+  <div class="button-group">
+    <button onclick="showModal('uploadModal')">Upload Image</button>
+    <button onclick="showModal('urlModal')">Load from URL</button>
+    <button onclick="saveImage()">💾 Save</button>
+  </div>
+  <br>
+
+  <div class="canvas-wrapper">
+    <canvas id="canvas" width="500" height="500"></canvas>
+    <div id="overlay"></div>
+  </div>
+
+  <div class="controls">
+    <label>Hue: <input type="range" id="hue" min="0" max="360" value="0"></label>
+    <label>Saturation: <input type="range" id="saturation" min="0" max="300" value="100"></label>
+    <label>Contrast: <input type="range" id="contrast" min="0" max="300" value="100"></label>
+    <label>Brightness: <input type="range" id="brightness" min="0" max="300" value="100"></label>
+  </div>
+
+  <div class="button-group">
+    <button onclick="rotateImage()">Rotate 90°</button>
+    <button onclick="cropImage()">Crop</button>
+    <button onclick="clearCrop()">Clear Crop</button>
+  </div>
+
+  <!-- Upload modal -->
+  <div id="uploadModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close-btn" onclick="hideModal('uploadModal')">✖</span>
+      <input type="file" id="uploadInput" accept="image/*">
+    </div>
+  </div>
+
+  <!-- URL modal -->
+  <div id="urlModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close-btn" onclick="hideModal('urlModal')">✖</span>
+      <input type="text" id="urlInput" placeholder="https://example.com/image.jpg">
+      <button onclick="loadFromURL()">Load</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+
+  const hueInput = document.getElementById('hue');
+  const saturationInput = document.getElementById('saturation');
+  const contrastInput = document.getElementById('contrast');
+  const brightnessInput = document.getElementById('brightness');
+
+  const uploadInput = document.getElementById('uploadInput');
+  const urlInput = document.getElementById('urlInput');
+
+  let fullImage = new Image();
+  let originalImgData = null;
+  let angle = 0;
+
+  let cropStart = null, cropEnd = null, isCropping = false;
+
+  function resetSliders() {
+    hueInput.value = 0;
+    saturationInput.value = 100;
+    contrastInput.value = 100;
+    brightnessInput.value = 100;
+  }
+
+  function showModal(id) {
+    document.getElementById(id).style.display = 'flex';
+  }
+
+  function hideModal(id) {
+    document.getElementById(id).style.display = 'none';
+  }
+
+  uploadInput.addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => loadImage(img);
+    img.src = URL.createObjectURL(file);
+    hideModal('uploadModal');
+  });
+
+  function loadFromURL() {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      loadImage(img);
+      hideModal('urlModal');
+    };
+    img.onerror = () => alert("Failed to load image.");
+    img.src = url;
+  }
+
+  function loadImage(img) {
+    fullImage = img;
+    angle = 0;
+    resetSliders();
+    clearCrop();
+    drawScaledImage();
+  }
+
+  function drawScaledImage() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const ratio = Math.min(canvas.width / fullImage.width, canvas.height / fullImage.height);
+    const w = fullImage.width * ratio;
+    const h = fullImage.height * ratio;
+    const x = (canvas.width - w) / 2;
+    const y = (canvas.height - h) / 2;
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(angle * Math.PI / 180);
+    ctx.translate(-canvas.width / 2, -canvas.height / 2);
+    ctx.drawImage(fullImage, x, y, w, h);
+    ctx.restore();
+    applyFilters();
+  }
+
+  function applyFilters() {
+    canvas.style.filter = `
+      hue-rotate(${hueInput.value}deg)
+      saturate(${saturationInput.value}%)
+      contrast(${contrastInput.value}%)
+      brightness(${brightnessInput.value}%)
+    `;
+  }
+
+  hueInput.oninput = applyFilters;
+  saturationInput.oninput = applyFilters;
+  contrastInput.oninput = applyFilters;
+  brightnessInput.oninput = applyFilters;
+
+  function rotateImage() {
+    angle = (angle + 90) % 360;
+    drawScaledImage();
+  }
+
+  function saveImage() {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = fullImage.width;
+    tempCanvas.height = fullImage.height;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    tempCtx.filter = `
+      hue-rotate(${hueInput.value}deg)
+      saturate(${saturationInput.value}%)
+      contrast(${contrastInput.value}%)
+      brightness(${brightnessInput.value}%)
+    `;
+
+    tempCtx.save();
+    tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+    tempCtx.rotate(angle * Math.PI / 180);
+    if (angle % 180 === 0) {
+      tempCtx.drawImage(fullImage, -fullImage.width / 2, -fullImage.height / 2);
+    } else {
+      tempCtx.drawImage(fullImage, -fullImage.height / 2, -fullImage.width / 2, fullImage.height, fullImage.width);
+    }
+    tempCtx.restore();
+
+    const link = document.createElement('a');
+    link.download = 'edited-image.png';
+    link.href = tempCanvas.toDataURL();
+    link.click();
+  }
+
+  // --- Crop interactions ---
+  canvas.addEventListener('mousedown', e => {
+    const rect = canvas.getBoundingClientRect();
+    cropStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    isCropping = true;
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!isCropping) return;
+    const rect = canvas.getBoundingClientRect();
+    cropEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const x = Math.min(cropStart.x, cropEnd.x);
+    const y = Math.min(cropStart.y, cropEnd.y);
+    const w = Math.abs(cropEnd.x - cropStart.x);
+    const h = Math.abs(cropEnd.y - cropStart.y);
+    Object.assign(overlay.style, {
+      left: x + 'px',
+      top: y + 'px',
+      width: w + 'px',
+      height: h + 'px',
+      display: 'block'
+    });
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isCropping = false;
+  });
+
+  function clearCrop() {
+    cropStart = cropEnd = null;
+    overlay.style.display = 'none';
+  }
+
+function cropImage() {
+  if (!cropStart || !cropEnd) {
+    alert("Draw a crop box by dragging.");
+    return;
+  }
+
+  const scale = Math.min(canvas.width / fullImage.width, canvas.height / fullImage.height);
+  const offsetX = (canvas.width - fullImage.width * scale) / 2;
+  const offsetY = (canvas.height - fullImage.height * scale) / 2;
+
+  const realStartX = (cropStart.x - offsetX) / scale;
+  const realStartY = (cropStart.y - offsetY) / scale;
+  const realEndX = (cropEnd.x - offsetX) / scale;
+  const realEndY = (cropEnd.y - offsetY) / scale;
+
+  const x = Math.max(0, Math.min(realStartX, realEndX));
+  const y = Math.max(0, Math.min(realStartY, realEndY));
+  const w = Math.abs(realEndX - realStartX);
+  const h = Math.abs(realEndY - realStartY);
+
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = w;
+  tempCanvas.height = h;
+  const tempCtx = tempCanvas.getContext('2d');
+
+  // Apply current rotation before cropping
+  tempCtx.save();
+  tempCtx.translate(w / 2, h / 2);
+  tempCtx.rotate(angle * Math.PI / 180);
+  tempCtx.translate(-w / 2, -h / 2);
+  tempCtx.drawImage(fullImage, x, y, w, h, 0, 0, w, h);
+  tempCtx.restore();
+
+  // Update image without resetting filters or angle
+  const newImg = new Image();
+  newImg.onload = () => {
+    fullImage = newImg;
+    clearCrop(); // just remove red box
+    drawScaledImage(); // re-draw without resetting sliders or angle
+  };
+  newImg.src = tempCanvas.toDataURL();
+}
+
+</script>
+</body>
+</html>
